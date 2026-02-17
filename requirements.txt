@@ -15,6 +15,7 @@
 # WhisperX (laut README: pip install whisperx; bringt alle Runtime-Deps mit)
 whisperx>=3.8.0
 
-# Unsere Zusätze (transcribe.py)
+# Unsere Zusätze (transcribe.py, download_from_url.py)
 ffmpeg-python>=0.2.0
 tqdm>=4.66.0
+youtube-dl>=2021.12.17

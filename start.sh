@@ -147,19 +147,62 @@ find_media_files() {
     printf '%s\n' "${files[@]}"
 }
 
+# Download von URL (YouTube etc.): Video oder MP3. Schreibt Pfad in selected_out.
+download_from_url_choice() {
+    local selected_out="$1"
+    echo -e "${BOLD}${YELLOW}URL eingeben${NC} (z. B. YouTube-Link)" >&2
+    read -rp "$(echo -e "${YELLOW}→ URL: ${NC}")" url
+    url=$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    if [ -z "$url" ]; then
+        ui_fail "Keine URL eingegeben."
+        return 1
+    fi
+    echo -e "${BOLD}${YELLOW}Als was herunterladen?${NC}" >&2
+    echo -e "  ${GREEN}1${NC}) Video (MP4)" >&2
+    echo -e "  ${GREEN}2${NC}) Nur Audio (MP3)" >&2
+    read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" format_choice
+    local mode="video"
+    [ "$format_choice" = "2" ] && mode="mp3"
+    ui_info "Lade herunter ($mode) …"
+    local out_path
+    out_path=$("${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$SCRIPT_DIR" 2>&1)
+    local ec=$?
+    if [ $ec -ne 0 ] || [ -z "$out_path" ] || [ ! -f "$out_path" ]; then
+        ui_fail "Download fehlgeschlagen. Prüfe URL und Internetverbindung."
+        echo "$out_path" | head -5 >&2
+        return 1
+    fi
+    printf '%s\n' "$out_path" > "$selected_out"
+    ui_ok "Gespeichert: $(basename "$out_path")"
+    return 0
+}
+
 # Select file interactively; write selected path to SELECTED_FILE (temp file path)
+# Option: Lokale Datei (Liste) oder Von URL herunterladen
 select_file() {
     local selected_out="$1"
     local -a files
     readarray -t files <<< "$(find_media_files)"
-    
+
+    echo -e "${BOLD}${YELLOW}Datei wählen${NC}" >&2
+    echo -e "  ${GREEN}1${NC}) ${DIM}Lokale Datei aus diesem Ordner${NC}" >&2
+    echo -e "  ${GREEN}2${NC}) ${DIM}Von URL herunterladen (YouTube etc.) – Video oder MP3${NC}" >&2
+    echo "" >&2
+    read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" source_choice
+
+    if [ "$source_choice" = "2" ]; then
+        download_from_url_choice "$selected_out" || exit 1
+        return 0
+    fi
+
+    # Lokale Datei
     if [ ${#files[@]} -eq 0 ] || [ -z "${files[0]:-}" ]; then
-        ui_fail "Keine Audio- oder Videodateien gefunden"
+        ui_fail "Keine Audio- oder Videodateien im Projektordner gefunden."
         ui_log "Unterstützte Formate: ${AUDIO_VIDEO_EXTENSIONS}"
+        ui_log "Oder wähle oben (2) für URL-Download."
         exit 1
     fi
 
-    echo -e "${BOLD}${YELLOW}Datei wählen${NC}" >&2
     echo -e "${DIM}Nummer eingeben (1–${#files[@]}). Bereits vorhandene Transkription (txt/) wird überschrieben.${NC}" >&2
     echo "" >&2
     for i in "${!files[@]}"; do
@@ -170,7 +213,7 @@ select_file() {
         filesize=$(du -h "${files[$i]}" | cut -f1)
         local suffix=""
         [ -f "$OUTPUT_PATH/${base}.txt" ] && suffix=" ${DIM}[bereits transkribiert]${NC}"
-        printf "  ${GREEN}%2d${NC}) %-50s ${DIM}%s${NC}%b\n" $((i + 1)) "$filename" "[$filesize]" "$suffix" >&2
+        echo -e "  ${GREEN}$((i + 1))${NC}) $filename  ${DIM}[$filesize]${NC}${suffix}" >&2
     done
     echo "" >&2
     while true; do
@@ -202,7 +245,7 @@ select_model() {
     for i in "${!models[@]}"; do
         local marker=""
         [ "${models[$i]}" = "$DEFAULT_MODEL" ] && marker=" ${GREEN}[Standard]${NC}"
-        printf "  ${GREEN}%d${NC}) %-12s  ${DIM}%s${NC}%s\n" $((i + 1)) "${models[$i]}" "${descriptions[$i]}" "$marker" >&2
+        echo -e "  ${GREEN}$((i + 1))${NC}) ${models[$i]}  ${DIM}${descriptions[$i]}${NC}${marker}" >&2
     done
     echo "" >&2
     read -rp "$(echo -e "${YELLOW}→ Auswahl (1–${#models[@]}):${NC} ")" selection
@@ -239,7 +282,7 @@ select_language() {
     for i in "${!languages[@]}"; do
         local marker=""
         [ "${languages[$i]}" = "auto" ] && marker=" ${GREEN}[Standard]${NC}"
-        printf "  ${GREEN}%2d${NC}) %-6s  ${DIM}%s${NC}%s\n" $((i + 1)) "${languages[$i]}" "${descriptions[$i]}" "$marker" >&2
+        echo -e "  ${GREEN}$((i + 1))${NC}) ${languages[$i]}  ${DIM}${descriptions[$i]}${NC}${marker}" >&2
     done
     echo "" >&2
     read -rp "$(echo -e "${YELLOW}→ Auswahl (1–${#languages[@]}):${NC} ")" selection

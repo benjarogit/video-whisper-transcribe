@@ -48,8 +48,9 @@ desktop.ini
 *~
 *.code-workspace
 
-# Lokale Dev-/Test-Docs (nicht für Nutzer)
+# Lokale Dev-/Test-Docs und Skripte (nicht für Nutzer/GitHub)
 INSTALL_UND_TEST.md
+gitpush.sh
 
 # Temporary files
 *.tmp

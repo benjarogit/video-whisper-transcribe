@@ -16,9 +16,11 @@ from dataclasses import dataclass
 # Bekannte harmlose Warnungen unterdrücken (Ausgabe ruhiger halten)
 # – torchcodec: pyannote nutzt es optional; WhisperX lädt Audio per FFmpeg
 # – TF32/Reproducibility: pyannote schaltet TF32 für Reproduzierbarkeit aus
+# – Lightning checkpoint upgrade: nur Hinweis, keine Aktion nötig
 warnings.filterwarnings("ignore", message=".*torchcodec.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*TensorFloat-32.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*TF32.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*Lightning automatically upgraded.*", category=UserWarning)
 
 import torch
 import whisperx
@@ -72,7 +74,7 @@ class TranscriptionConfig:
 # ============================================================================
 
 def setup_logging() -> logging.Logger:
-    """Setup logging: eine gemeinsame Datei logs/whisper.log (wie Shell-Skripte), Append, Konsolen-Ausgabe."""
+    """Setup logging: nur in logs/whisper.log (keine Flut auf der Konsole). Fortschritt nur via tqdm + kurze Prints."""
     log_dir = Path(__file__).resolve().parent / "logs"
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / "whisper.log"
@@ -84,11 +86,9 @@ def setup_logging() -> logging.Logger:
         level=logging.INFO,
         format=log_format,
         datefmt=date_fmt,
-        handlers=[
-            logging.FileHandler(log_file, mode="a", encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=[logging.FileHandler(log_file, mode="a", encoding="utf-8")],
     )
+    # Kein StreamHandler – Details nur in der Log-Datei, Konsole bleibt ruhig (nur tqdm + Abschluss)
 
     logger = logging.getLogger(__name__)
     logger.info(f"Log-Datei: {log_file}")
@@ -299,6 +299,11 @@ def save_transcription(
 def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> None:
     """Main transcription pipeline"""
     try:
+        # Bibliotheken (z. B. Lightning) dürfen nicht auf die Konsole loggen – nur in Datei
+        root = logging.getLogger()
+        for h in root.handlers[:]:
+            if isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (sys.stdout, sys.stderr):
+                root.removeHandler(h)
         logger.info("=== Pipeline start ===")
         config.validate()
         logger.info("Configuration validated")
@@ -306,9 +311,13 @@ def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> No
         logger.info(f"Output dir: {config.output_path}")
         logger.info(f"Model: {config.model_size}, Device: {config.device}, Compute: {config.compute_type}")
 
+        if sys.stdout.isatty():
+            print(f"  {C_CYN}⟳{C_OFF} Lade Modell …", flush=True)
         logger.info("Lade WhisperX-Modell (whisperx.load_model)...")
         model = load_model(config, logger)
 
+        if sys.stdout.isatty():
+            print(f"  {C_CYN}⟳{C_OFF} Transkribiere …", flush=True)
         logger.info("Starte Transkription (load_audio + model.transcribe)...")
         result = transcribe_audio(model, config, logger)
         
@@ -329,14 +338,14 @@ def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> No
         if result.get('segments'):
             total_segments = len(result['segments'])
             logger.info(f"Processing {total_segments} segments...")
-            
-            # Show progress bar
+            # Nur Fortschrittsbalken auf der Konsole (Details im Log)
             for segment in tqdm(
                 result['segments'],
-                desc='Processing segments',
+                desc='  Segmente',
                 unit='segment',
                 ncols=80,
-                leave=True
+                leave=True,
+                file=sys.stdout,
             ):
                 pass  # Segments already processed, just showing progress
         
