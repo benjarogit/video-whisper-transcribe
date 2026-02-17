@@ -362,6 +362,8 @@ if ! log_run_cmd_spinner "pip install -r requirements.txt (WhisperX und Abhängi
     ui_warn "Details in den Logs: $(get_log_path 2>/dev/null || echo "$SCRIPT_DIR/logs/whisper.log")"
     exit 1
 fi
+# Veraltetes youtube-dl entfernen (wir nutzen nur noch yt-dlp)
+"$SCRIPT_DIR/venv/bin/pip" uninstall -y youtube-dl 2>/dev/null || true
 
 # Lightning-Checkpoint einmal upgraden, damit die Meldung nicht bei jeder Transkription erscheint
 pyver=$("$SCRIPT_DIR/venv/bin/python3" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null) || true

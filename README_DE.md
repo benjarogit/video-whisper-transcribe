@@ -17,7 +17,7 @@ Ein modernes, benutzerfreundliches Tool zur automatischen Transkription von Audi
 - 🎨 **Moderne CLI** - Farbige, interaktive Benutzeroberfläche
 - 📊 **Fortschrittsanzeige** - Echtzeitanzeige des Transkriptionsstatus
 - 📁 **Batch-Verarbeitung** - Mehrere Dateien nacheinander transkribieren
-- 🔗 **URL-Download** - YouTube- oder andere URL eingeben; als Video oder MP3 herunterladen, dann transkribieren (via [youtube-dl](https://github.com/ytdl-org/youtube-dl))
+- 🔗 **URL-Download** - YouTube- oder andere URL eingeben; als Video oder MP3 herunterladen, dann transkribieren (via [yt-dlp](https://github.com/yt-dlp/yt-dlp))
 
 ## 🎬 Unterstützte Formate
 
@@ -138,7 +138,7 @@ Erkennt automatisch `python3.12`/`python3.13`; bei NVIDIA/AMD erscheint die Abfr
 ```
 
 Das Skript wird mit Bash ausgeführt und führt durch:
-1. **Datei oder URL:** Lokale Datei wählen oder eine URL eingeben (z. B. YouTube) – als Video (MP4) oder nur Audio (MP3) herunterladen, dann transkribieren
+1. **Datei oder URL:** Lokale Datei aus dem Ordner `medien/` wählen oder eine URL eingeben (z. B. YouTube) – Download als Video (MP4) oder nur Audio (MP3) nach `medien/`, dann transkribieren
 2. Modell-Auswahl (tiny bis large-v3)
 3. Sprach-Auswahl (oder automatisch)
 
@@ -251,6 +251,7 @@ Alle Skripte und transcribe.py schreiben in `logs/whisper.log`. Bei neuem Start 
 - `scripts/uninstall.sh` – Vollständiger Rückbau (venv, State, txt, logs; optional System-Pakete)
 - `requirements.txt` – Python-Abhängigkeiten
 - `venv/` – Virtuelle Umgebung (lokal, nicht im Repo)
+- `medien/` – Medienordner für lokale Dateien und URL-Downloads (nicht im Repo)
 - `txt/` – Ausgabeordner für Transkripte (nicht im Repo)
 
 ## 📋 Changelog

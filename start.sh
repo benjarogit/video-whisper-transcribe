@@ -8,6 +8,7 @@ set -euo pipefail  # Exit on error, undefined vars, pipe failures
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly VENV_PATH="${SCRIPT_DIR}/venv"
 readonly OUTPUT_PATH="${SCRIPT_DIR}/txt"
+readonly MEDIA_DIR="${SCRIPT_DIR}/medien"
 readonly DEFAULT_MODEL="small"
 
 # shellcheck source=scripts/ui.sh
@@ -110,7 +111,19 @@ require_installed() {
         echo ""
         return 0
     fi
-    if ! "${VENV_PATH}/bin/python3" -c "import whisperx" 2>/dev/null; then
+    local tmp_ec
+    tmp_ec=$(mktemp 2>/dev/null) || tmp_ec="/tmp/vw_whisperx_$$.ec"
+    ( "${VENV_PATH}/bin/python3" -c "import whisperx" 2>/dev/null; echo $? > "$tmp_ec" ) & local pid=$!
+    if type ui_spinner &>/dev/null && [ -t 1 ]; then
+        ui_spinner "$pid" "WhisperX prüfen…"
+    else
+        wait "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    local whisperx_ec=1
+    [ -f "$tmp_ec" ] && whisperx_ec=$(cat "$tmp_ec" 2>/dev/null) || true
+    rm -f "$tmp_ec"
+    if [ "$whisperx_ec" -ne 0 ]; then
         ui_info "WhisperX fehlt in der venv. Starte Installation (scripts/install.sh)..."
         log_info_quiet "WhisperX fehlt in venv. Starte install.sh" 2>/dev/null || true
         echo ""
@@ -127,22 +140,32 @@ require_installed() {
     fi
 }
 
-# Zeigt einen Hinweis nur bei für uns relevanten Updates (WhisperX, ffmpeg-python, tqdm).
+# Zeigt einen Hinweis nur bei für uns relevanten Updates (WhisperX, ffmpeg-python, tqdm, yt-dlp).
 # torch/torchaudio bewusst nicht: Version hängt an WhisperX; neuere PyPI-Version wäre für unseren Stack nicht passend.
 check_updates_available() {
-    local outdated
-    outdated=$("${VENV_PATH}/bin/pip" list --outdated 2>/dev/null | grep -iE "^(whisperx|ffmpeg-python|tqdm)[[:space:]]" || true)
+    local outdated tmp
+    tmp=$(mktemp 2>/dev/null) || tmp="/tmp/vw_pip_$$.tmp"
+    "${VENV_PATH}/bin/pip" list --outdated 2>/dev/null > "$tmp" & local pid=$!
+    if type ui_spinner &>/dev/null && [ -t 1 ]; then
+        ui_spinner "$pid" "Updates prüfen…"
+    else
+        wait "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    outdated=$(grep -iE "^(whisperx|ffmpeg-python|tqdm|yt-dlp)[[:space:]]" "$tmp" 2>/dev/null || true)
+    rm -f "$tmp"
     if [ -n "$outdated" ]; then
         ui_warn "Updates verfügbar (WhisperX/Zusätze). Führe ./scripts/update.sh aus."
         echo ""
     fi
 }
 
-# Find media files (one path per line for correct readarray)
+# Find media files in medien/ (one path per line for correct readarray)
 find_media_files() {
     local -a files
-    mapfile -t files < <(find "$SCRIPT_DIR" -maxdepth 1 -type f -regextype posix-extended \
-        -iregex ".*\.(${AUDIO_VIDEO_EXTENSIONS})$" | sort)
+    mkdir -p "$MEDIA_DIR"
+    mapfile -t files < <(find "$MEDIA_DIR" -maxdepth 1 -type f -regextype posix-extended \
+        -iregex ".*\.(${AUDIO_VIDEO_EXTENSIONS})$" 2>/dev/null | sort)
     
     printf '%s\n' "${files[@]}"
 }
@@ -163,15 +186,28 @@ download_from_url_choice() {
     read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" format_choice
     local mode="video"
     [ "$format_choice" = "2" ] && mode="mp3"
-    ui_info "Lade herunter ($mode) …"
-    local out_path
-    out_path=$("${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$SCRIPT_DIR" 2>&1)
-    local ec=$?
+    local out_path ec prog_f stdout_f err_f
+    prog_f=$(mktemp 2>/dev/null) || prog_f="/tmp/vw_dl_prog_$$"
+    stdout_f=$(mktemp 2>/dev/null) || stdout_f="/tmp/vw_dl_stdout_$$"
+    err_f=$(mktemp 2>/dev/null) || err_f="/tmp/vw_dl_err_$$"
+    : > "$prog_f" ; : > "$stdout_f" ; : > "$err_f"
+    "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$MEDIA_DIR" "$prog_f" > "$stdout_f" 2> "$err_f" & local pid=$!
+    if type ui_spinner &>/dev/null && [ -t 1 ]; then
+        ui_spinner "$pid" "Download ($mode)…" "$prog_f"
+    else
+        wait "$pid" 2>/dev/null || true
+        echo "  ✓ Download ($mode)…" >&2
+    fi
+    wait "$pid" 2>/dev/null || true
+    ec=$?
+    out_path=$(sed -n '1p' "$stdout_f" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     if [ $ec -ne 0 ] || [ -z "$out_path" ] || [ ! -f "$out_path" ]; then
         ui_fail "Download fehlgeschlagen. Prüfe URL und Internetverbindung."
-        echo "$out_path" | head -5 >&2
+        [ -s "$err_f" ] && head -10 "$err_f" >&2
+        rm -f "$prog_f" "$stdout_f" "$err_f"
         return 1
     fi
+    rm -f "$prog_f" "$stdout_f" "$err_f"
     printf '%s\n' "$out_path" > "$selected_out"
     ui_ok "Gespeichert: $(basename "$out_path")"
     return 0
@@ -185,7 +221,7 @@ select_file() {
     readarray -t files <<< "$(find_media_files)"
 
     echo -e "${BOLD}${YELLOW}Datei wählen${NC}" >&2
-    echo -e "  ${GREEN}1${NC}) ${DIM}Lokale Datei aus diesem Ordner${NC}" >&2
+    echo -e "  ${GREEN}1${NC}) ${DIM}Lokale Datei aus Ordner medien/${NC}" >&2
     echo -e "  ${GREEN}2${NC}) ${DIM}Von URL herunterladen (YouTube etc.) – Video oder MP3${NC}" >&2
     echo "" >&2
     read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" source_choice
@@ -197,9 +233,9 @@ select_file() {
 
     # Lokale Datei
     if [ ${#files[@]} -eq 0 ] || [ -z "${files[0]:-}" ]; then
-        ui_fail "Keine Audio- oder Videodateien im Projektordner gefunden."
+        ui_fail "Keine Audio- oder Videodateien im Ordner medien/ gefunden."
         ui_log "Unterstützte Formate: ${AUDIO_VIDEO_EXTENSIONS}"
-        ui_log "Oder wähle oben (2) für URL-Download."
+        ui_log "Dateien in medien/ ablegen oder oben (2) für URL-Download wählen."
         exit 1
     fi
 

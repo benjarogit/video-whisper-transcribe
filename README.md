@@ -17,7 +17,7 @@ A modern, user-friendly tool for automatic transcription of audio and video file
 - 🎨 **Modern CLI** – Coloured, interactive interface
 - 📊 **Progress display** – Real-time transcription status
 - 📁 **Batch processing** – Transcribe multiple files in sequence
-- 🔗 **URL download** – Enter a YouTube (or other) URL; download as video or MP3, then transcribe (via [youtube-dl](https://github.com/ytdl-org/youtube-dl))
+- 🔗 **URL download** – Enter a YouTube (or other) URL; download as video or MP3, then transcribe (via [yt-dlp](https://github.com/yt-dlp/yt-dlp))
 
 ## 🎬 Supported formats
 
@@ -133,7 +133,7 @@ Detects `python3.12`/`python3.13`; on NVIDIA/AMD you get a prompt for PyTorch wi
 ```
 
 The script runs in Bash and guides you through:
-1. **File or URL:** Pick a local file, or enter a URL (e.g. YouTube) to download as video (MP4) or audio (MP3), then transcribe it
+1. **File or URL:** Pick a local file from the `medien/` folder, or enter a URL (e.g. YouTube) to download as video (MP4) or audio (MP3) into `medien/`, then transcribe it
 2. Model choice (tiny to large-v3)
 3. Language choice (or auto-detect)
 
@@ -246,6 +246,7 @@ All scripts and transcribe.py write to `logs/whisper.log`. On the next start of 
 - `scripts/uninstall.sh` – Full teardown (venv, state, txt, logs; optional system packages)
 - `requirements.txt` – Python dependencies
 - `venv/` – Virtual environment (local, not in repo)
+- `medien/` – Media folder for local files and URL downloads (not in repo)
 - `txt/` – Output folder for transcripts (not in repo)
 
 ## 📋 Changelog

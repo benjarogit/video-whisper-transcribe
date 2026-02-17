@@ -16,7 +16,7 @@ _(Keine Änderungen.)_
 
 ### Added
 
-- **URL-Download:** Im Start-Menü optional eine URL eingeben (z. B. YouTube); Download als Video (MP4) oder nur Audio (MP3), anschließend Transkription. Nutzt [youtube-dl](https://github.com/ytdl-org/youtube-dl). Dateien landen im Ordner `downloads/`.
+- **URL-Download:** Im Start-Menü optional eine URL eingeben (z. B. YouTube); Download als Video (MP4) oder nur Audio (MP3), anschließend Transkription. Nutzt [yt-dlp](https://github.com/yt-dlp/yt-dlp). Dateien landen im Ordner `medien/`.
 
 ---
 

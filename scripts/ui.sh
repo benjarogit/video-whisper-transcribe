@@ -136,7 +136,8 @@ ui_spinner() {
         i=$(( (i + 1) % ${#frames[@]} ))
         sleep 0.1
     done
-    printf "\r  ${GREEN}${OK}${RESET} %s\n" "$msg"
+    # Bis Zeilenende löschen, damit keine Reste der Spinner-Padding-Zeile (z. B. „…“) stehen bleiben
+    printf "\r  ${GREEN}${OK}${RESET} %s\033[K\n" "$msg"
 }
 
 # Optional: generisches Menü – gibt gewählte Nummer zurück (oder leer)

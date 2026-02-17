@@ -12,7 +12,7 @@ env/
 build/
 develop-eggs/
 dist/
-downloads/
+medien/
 eggs/
 .eggs/
 lib64/

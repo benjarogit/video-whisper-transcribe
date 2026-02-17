@@ -60,7 +60,7 @@ fi
 echo ""
 
 ui_section "Relevante Pakete"
-"${VENV_PATH}/bin/pip" list 2>/dev/null | grep -iE "whisper|torch|tqdm|numpy|ffmpeg" || true
+"${VENV_PATH}/bin/pip" list 2>/dev/null | grep -iE "whisper|torch|tqdm|numpy|ffmpeg|yt-dlp" || true
 echo ""
 
 # --- Verfügbare Updates prüfen ---
@@ -83,6 +83,8 @@ echo ""
 
 ui_section "Aktualisierung"
 log_run_cmd_spinner "pip install --upgrade pip" "pip aktualisieren…" "${VENV_PATH}/bin/pip" install --upgrade pip || true
+# Veraltetes youtube-dl entfernen (wir nutzen nur noch yt-dlp)
+"${VENV_PATH}/bin/pip" uninstall -y youtube-dl 2>/dev/null || true
 log_info_quiet "Starte: pip install --upgrade -r requirements.txt"
 if log_run_cmd_spinner "pip install --upgrade -r requirements.txt (WhisperX etc.)" "Pakete aktualisieren (WhisperX etc.)…" "${VENV_PATH}/bin/pip" install --upgrade -r "${SCRIPT_DIR}/requirements.txt"; then
     log_info_quiet "Update durchgeführt (WhisperX/torch etc.)."
@@ -108,7 +110,7 @@ echo ""
 ui_divider
 log_info_quiet "Update abgeschlossen. Log: $(get_log_path 2>/dev/null)"
 ui_log "Versionen nach Update:"
-"${VENV_PATH}/bin/pip" list 2>/dev/null | grep -iE "whisper|torch|tqdm|numpy|ffmpeg" || true
+"${VENV_PATH}/bin/pip" list 2>/dev/null | grep -iE "whisper|torch|tqdm|numpy|ffmpeg|yt-dlp" || true
 echo ""
 ui_ok "Fertig."
 echo ""
