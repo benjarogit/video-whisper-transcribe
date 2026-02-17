@@ -6,7 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/de/1.0.0/), Versionierung:
 
 ---
 
-## [Unreleased]
+## [1.0.6] - 2026-02-17
+
 
 ### Added
 
@@ -29,6 +30,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/de/1.0.0/), Versionierung:
 - **Download „fehlgeschlagen“ obwohl Datei da:** Pfad-Ausgabe mit `flush=True`; Fallback sucht neueste Datei in `medien/` seit Download-Start (Start-Marker-Datei, da Progress-Datei ständig überschrieben wird).
 - **Spinner:** Weißes Kästchen am Zeilenende war der sichtbare Cursor – Cursor wird während des Spinners ausgeblendet und danach wieder eingeblendet.
 
+
+## [Unreleased]
+
+_(Keine Änderungen.)_
+
+---
 ---
 
 ## [1.0.4] - 2026-02-17
