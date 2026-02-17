@@ -1,0 +1,82 @@
+# Video Whisper - Git Ignore (Linux)
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Log files and directory (Shell: video_whisper.log, Python: transcription_*.log)
+logs/
+*.log
+transcription_*.log
+
+# Output files
+txt/
+*.txt
+!requirements.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / Editor (nicht ins Repo)
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# Lokale Dev-/Test-Docs (nicht für Nutzer)
+INSTALL_UND_TEST.md
+
+# Temporary files
+*.tmp
+*.bak
+
+# Media files (user data, nicht ins Repo)
+*.mp3
+*.mp4
+*.wav
+*.mkv
+*.avi
+*.mov
+*.webm
+*.wmv
+*.m4a
+*.flac
+*.aac
+*.ogg
+*.opus
+
+# Installations- und Kompatibilitäts-State (dynamisch, pro Rechner)
+.video_whisper_state
+.video_whisper_state.json
+
+# Portable Python (im Projektordner, z.B. USB)
+.python-portable/
+cpython-3.12.*+*-install_only.tar.gz
+
+# Linux only – no Windows artifacts
+

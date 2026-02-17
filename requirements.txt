@@ -1,0 +1,20 @@
+# Video Whisper – Abhängigkeiten (orientiert an offiziellem WhisperX README)
+# https://github.com/m-bain/whisperX (Setup: CUDA 12.8 optional → pip install whisperx; ffmpeg nötig)
+#
+# scripts/install.sh folgt der offiziellen Reihenfolge:
+#   0. FFmpeg prüfen (README: "You may also need to install ffmpeg")
+#   1. Python 3.10–3.13 (ggf. systemweit installieren)
+#   2. venv anlegen
+#   3. Bei NVIDIA: optional PyTorch mit CUDA 12.8 / 12.4 / 12.1 (README: "install CUDA toolkit 12.8")
+#   4. pip install -r requirements.txt (hier)
+#
+# WhisperX bringt torch, torchaudio, faster-whisper etc. mit. Wir listen nur Hauptabhängigkeit + Zusatz.
+# Aktuell halten: ./scripts/update.sh  oder  pip install --upgrade whisperx
+# -----------------------------------------------------------------------------
+
+# WhisperX (laut README: pip install whisperx; bringt alle Runtime-Deps mit)
+whisperx>=3.8.0
+
+# Unsere Zusätze (transcribe.py)
+ffmpeg-python>=0.2.0
+tqdm>=4.66.0
