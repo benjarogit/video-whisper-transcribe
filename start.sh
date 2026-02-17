@@ -170,6 +170,123 @@ find_media_files() {
     printf '%s\n' "${files[@]}"
 }
 
+# Alle Mediendateien in medien/ zu prass1.ext, prass2.ext, … umbenennen (sortiert nach Name, zwei Phasen gegen Überschreiben).
+rename_media_to_prass() {
+    mkdir -p "$MEDIA_DIR"
+    local -a files
+    readarray -t files < <(find "$MEDIA_DIR" -maxdepth 1 -type f -regextype posix-extended \
+        -iregex ".*\.(${AUDIO_VIDEO_EXTENSIONS})$" 2>/dev/null | sort)
+    if [ ${#files[@]} -eq 0 ] || [ -z "${files[0]:-}" ]; then
+        ui_warn "Keine Dateien in medien/ zum Umbenennen."
+        return 0
+    fi
+    local i f ext
+    for i in "${!files[@]}"; do
+        f="${files[$i]}"
+        [ -f "$f" ] || continue
+        ext="${f##*.}"
+        mv -f "$f" "${MEDIA_DIR}/vw_prass_$((i + 1)).${ext}" 2>/dev/null || return 1
+    done
+    local n=0 tmp
+    for tmp in "${MEDIA_DIR}"/vw_prass_*.*; do
+        [ -f "$tmp" ] || continue
+        n=$((n + 1))
+        ext="${tmp##*.}"
+        mv -f "$tmp" "${MEDIA_DIR}/prass${n}.${ext}" 2>/dev/null || return 1
+    done
+    ui_ok "Umbenannt: ${#files[@]} Dateien → prass1, prass2, …"
+}
+
+# Bulk-Download: mehrere URLs (eine pro Zeile), alle in medien/, dann eine für Transkription wählen.
+download_bulk_choice() {
+    local selected_out="$1"
+    echo -e "${BOLD}${YELLOW}URLs eingeben${NC} (eine pro Zeile). ${DIM}Zum Beenden: nur Enter drücken (nichts tippen).${NC}" >&2
+    echo "" >&2
+    local urls=()
+    local line
+    while true; do
+        read -rp "$(echo -e "${YELLOW}→ URL (oder Enter = fertig):${NC} ")" line
+        line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$line" ] && break
+        [[ "$line" =~ ^https?:// ]] && urls+=( "$line" )
+    done
+    if [ ${#urls[@]} -eq 0 ]; then
+        ui_fail "Keine gültigen URLs eingegeben."
+        return 1
+    fi
+    echo -e "${BOLD}${YELLOW}Als was herunterladen?${NC}" >&2
+    echo -e "  ${GREEN}1${NC}) Video (MP4)" >&2
+    echo -e "  ${GREEN}2${NC}) Nur Audio (MP3)" >&2
+    read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" format_choice
+    local mode="video"
+    [ "$format_choice" = "2" ] && mode="mp3"
+    echo -e "${BOLD}${YELLOW}Basis-Titel für alle Dateinamen?${NC} ${DIM}(z. B. „Video“ → Video 1, Video 2, …; Enter = Videotitel pro Video)${NC}" >&2
+    read -rp "$(echo -e "${YELLOW}→ Basis-Titel: ${NC}")" bulk_base
+    bulk_base=$(echo "$bulk_base" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    local -a downloaded=()
+    local i url prog_f stdout_f err_f out_path ec title_suffix base_arg
+    for i in "${!urls[@]}"; do
+        url="${urls[$i]}"
+        [ "$i" -gt 0 ] && echo "" >&2
+        ui_info "Download $((i + 1))/${#urls[@]} ($mode) …"
+        prog_f=$(mktemp 2>/dev/null) || prog_f="/tmp/vw_dl_prog_$$_$i"
+        stdout_f=$(mktemp 2>/dev/null) || stdout_f="/tmp/vw_dl_stdout_$$_$i"
+        err_f=$(mktemp 2>/dev/null) || err_f="/tmp/vw_dl_err_$$_$i"
+        : > "$prog_f" ; : > "$stdout_f" ; : > "$err_f"
+        if [ -n "$bulk_base" ]; then
+            title_suffix=" $((i + 1))"
+            base_arg="$bulk_base"
+        else
+            [ "$i" -gt 0 ] && title_suffix=" $((i + 1))" || title_suffix=""
+            base_arg=""
+        fi
+        if [ -n "$base_arg" ]; then
+            PYTHONUNBUFFERED=1 "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$MEDIA_DIR" "$prog_f" "$title_suffix" "$base_arg" > "$stdout_f" 2> "$err_f" & local pid=$!
+        else
+            PYTHONUNBUFFERED=1 "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$MEDIA_DIR" "$prog_f" "$title_suffix" > "$stdout_f" 2> "$err_f" & local pid=$!
+        fi
+        if type ui_spinner &>/dev/null && [ -t 1 ]; then
+            ui_spinner "$pid" "Download $((i + 1))/${#urls[@]} ($mode)…" "$prog_f"
+        else
+            wait "$pid" 2>/dev/null || true
+        fi
+        wait "$pid" 2>/dev/null || true
+        ec=$?
+        # Pfad aus stdout: oft letzte Zeile (falls Skript vorher andere Zeilen ausgibt)
+        out_path=$(grep -E '\.(mp4|mp3|m4a|webm)$' "$stdout_f" 2>/dev/null | tail -1 | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$out_path" ] && out_path=$(sed -n '1p' "$stdout_f" 2>/dev/null | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        rm -f "$prog_f" "$stdout_f" "$err_f"
+        # Erfolg wenn Datei existiert (Skript kann trotz Exit-Code 0 die Datei geschrieben haben)
+        if [ -n "$out_path" ] && [ -f "$out_path" ]; then
+            downloaded+=( "$out_path" )
+            ui_ok "Gespeichert: $(basename "$out_path")"
+        else
+            ui_fail "Fehlgeschlagen: $url"
+        fi
+    done
+    if [ ${#downloaded[@]} -eq 0 ]; then
+        ui_fail "Kein Download erfolgreich."
+        return 1
+    fi
+    if [ ${#downloaded[@]} -eq 1 ]; then
+        printf '%s\n' "${downloaded[0]}" > "$selected_out"
+        return 0
+    fi
+    echo -e "${BOLD}${YELLOW}Welche Datei jetzt transkribieren?${NC}" >&2
+    for i in "${!downloaded[@]}"; do
+        echo -e "  ${GREEN}$((i + 1))${NC}) $(basename "${downloaded[$i]}")" >&2
+    done
+    echo "" >&2
+    while true; do
+        read -rp "$(echo -e "${YELLOW}→ Auswahl (1–${#downloaded[@]}):${NC} ")" selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#downloaded[@]}" ]; then
+            printf '%s\n' "${downloaded[$((selection - 1))]}" > "$selected_out"
+            return 0
+        fi
+        ui_fail "Ungültige Auswahl."
+    done
+}
+
 # Download von URL (YouTube etc.): Video oder MP3. Schreibt Pfad in selected_out.
 download_from_url_choice() {
     local selected_out="$1"
@@ -186,12 +303,20 @@ download_from_url_choice() {
     read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" format_choice
     local mode="video"
     [ "$format_choice" = "2" ] && mode="mp3"
-    local out_path ec prog_f stdout_f err_f
+    echo -e "${BOLD}${YELLOW}Eigenen Dateinamen?${NC} ${DIM}(Enter = Videotitel von YouTube)${NC}" >&2
+    read -rp "$(echo -e "${YELLOW}→ Dateiname: ${NC}")" custom_title
+    custom_title=$(echo "$custom_title" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    local out_path ec prog_f stdout_f err_f start_marker
+    start_marker=$(mktemp 2>/dev/null) || start_marker="/tmp/vw_dl_start_$$"
     prog_f=$(mktemp 2>/dev/null) || prog_f="/tmp/vw_dl_prog_$$"
     stdout_f=$(mktemp 2>/dev/null) || stdout_f="/tmp/vw_dl_stdout_$$"
     err_f=$(mktemp 2>/dev/null) || err_f="/tmp/vw_dl_err_$$"
-    : > "$prog_f" ; : > "$stdout_f" ; : > "$err_f"
-    "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$MEDIA_DIR" "$prog_f" > "$stdout_f" 2> "$err_f" & local pid=$!
+    : > "$start_marker" ; : > "$prog_f" ; : > "$stdout_f" ; : > "$err_f"
+    if [ -n "$custom_title" ]; then
+        PYTHONUNBUFFERED=1 "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$MEDIA_DIR" "$prog_f" "" "$custom_title" > "$stdout_f" 2> "$err_f" & local pid=$!
+    else
+        PYTHONUNBUFFERED=1 "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/scripts/download_from_url.py" "$url" "$mode" "$MEDIA_DIR" "$prog_f" > "$stdout_f" 2> "$err_f" & local pid=$!
+    fi
     if type ui_spinner &>/dev/null && [ -t 1 ]; then
         ui_spinner "$pid" "Download ($mode)…" "$prog_f"
     else
@@ -200,38 +325,62 @@ download_from_url_choice() {
     fi
     wait "$pid" 2>/dev/null || true
     ec=$?
-    out_path=$(sed -n '1p' "$stdout_f" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    if [ $ec -ne 0 ] || [ -z "$out_path" ] || [ ! -f "$out_path" ]; then
+    out_path=$(grep -E '\.(mp4|mp3|m4a|webm)$' "$stdout_f" 2>/dev/null | tail -1 | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$out_path" ] && out_path=$(sed -n '1p' "$stdout_f" 2>/dev/null | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # Fallback: Datei wurde geschrieben, aber Pfad kam nicht auf stdout – neueste Datei in medien/ seit Start (start_marker wird nicht überschrieben, prog_f schon)
+    if { [ -z "$out_path" ] || [ ! -f "$out_path" ]; } && [ -d "$MEDIA_DIR" ] && [ -f "$start_marker" ]; then
+        newest=$(find "$MEDIA_DIR" -maxdepth 1 -type f \( -iname "*.mp4" -o -iname "*.mp3" -o -iname "*.m4a" -o -iname "*.webm" \) -newer "$start_marker" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | sed 's/^[0-9][0-9]* //')
+        [ -n "$newest" ] && [ -f "$newest" ] && out_path=$newest
+    fi
+    if [ -z "$out_path" ] || [ ! -f "$out_path" ]; then
         ui_fail "Download fehlgeschlagen. Prüfe URL und Internetverbindung."
-        [ -s "$err_f" ] && head -10 "$err_f" >&2
-        rm -f "$prog_f" "$stdout_f" "$err_f"
+        if [ -s "$err_f" ]; then
+            echo "" >&2
+            echo -e "  ${DIM}Fehlerausgabe:${NC}" >&2
+            sed 's/^/    /' "$err_f" >&2
+        fi
+        rm -f "$start_marker" "$prog_f" "$stdout_f" "$err_f"
         return 1
     fi
-    rm -f "$prog_f" "$stdout_f" "$err_f"
+    rm -f "$start_marker" "$prog_f" "$stdout_f" "$err_f"
     printf '%s\n' "$out_path" > "$selected_out"
     ui_ok "Gespeichert: $(basename "$out_path")"
     return 0
 }
 
 # Select file interactively; write selected path to SELECTED_FILE (temp file path)
-# Option: Lokale Datei (Liste) oder Von URL herunterladen
+# Option: Lokale Datei (Liste) oder Von URL herunterladen. Liste wird jedes Mal neu vom Ordner gelesen.
 select_file() {
     local selected_out="$1"
     local -a files
-    readarray -t files <<< "$(find_media_files)"
+    mkdir -p "$MEDIA_DIR"
+    readarray -t files < <(find "$MEDIA_DIR" -maxdepth 1 -type f -regextype posix-extended \
+        -iregex ".*\.(${AUDIO_VIDEO_EXTENSIONS})$" 2>/dev/null | sort)
 
     echo -e "${BOLD}${YELLOW}Datei wählen${NC}" >&2
     echo -e "  ${GREEN}1${NC}) ${DIM}Lokale Datei aus Ordner medien/${NC}" >&2
-    echo -e "  ${GREEN}2${NC}) ${DIM}Von URL herunterladen (YouTube etc.) – Video oder MP3${NC}" >&2
+    echo -e "  ${GREEN}2${NC}) ${DIM}Eine URL herunterladen (YouTube etc.) – Video oder MP3${NC}" >&2
+    echo -e "  ${GREEN}3${NC}) ${DIM}Bulk-Download: mehrere URLs (eine pro Zeile)${NC}" >&2
+    echo -e "  ${GREEN}4${NC}) ${DIM}Alle Dateien in medien/ zu prass1, prass2, … umbenennen${NC}" >&2
     echo "" >&2
-    read -rp "$(echo -e "${YELLOW}→ Auswahl (1–2): ${NC}")" source_choice
+    read -rp "$(echo -e "${YELLOW}→ Auswahl (1–4): ${NC}")" source_choice
 
     if [ "$source_choice" = "2" ]; then
         download_from_url_choice "$selected_out" || exit 1
         return 0
     fi
+    if [ "$source_choice" = "3" ]; then
+        download_bulk_choice "$selected_out" || exit 1
+        return 0
+    fi
+    if [ "$source_choice" = "4" ]; then
+        rename_media_to_prass
+        echo "" >&2
+        readarray -t files < <(find "$MEDIA_DIR" -maxdepth 1 -type f -regextype posix-extended \
+            -iregex ".*\.(${AUDIO_VIDEO_EXTENSIONS})$" 2>/dev/null | sort)
+    fi
 
-    # Lokale Datei
+    # Lokale Datei (Option 1 oder nach 4)
     if [ ${#files[@]} -eq 0 ] || [ -z "${files[0]:-}" ]; then
         ui_fail "Keine Audio- oder Videodateien im Ordner medien/ gefunden."
         ui_log "Unterstützte Formate: ${AUDIO_VIDEO_EXTENSIONS}"
@@ -369,49 +518,84 @@ main() {
     # Create output directory
     mkdir -p "$OUTPUT_PATH"
 
-    # Interactive selections (write path to temp file to avoid stdout/stderr mixing)
-    ui_section "Schritt 1: Datei"
-    select_file "$selected_file"
-    local file_path
-    file_path=$(cat "$selected_file")
-    ui_ok "$(basename "$file_path")"
-    echo ""
+    while true; do
+        # Interactive selections (write path to temp file to avoid stdout/stderr mixing)
+        ui_section "Schritt 1: Datei"
+        select_file "$selected_file"
+        local file_path
+        file_path=$(cat "$selected_file")
+        ui_ok "$(basename "$file_path")"
+        echo ""
 
-    ui_section "Schritt 2: Modell"
-    local model
-    model=$(select_model)
-    ui_ok "$model"
-    echo ""
+        ui_section "Schritt 2: Modell"
+        local model
+        model=$(select_model)
+        ui_ok "$model"
+        echo ""
 
-    ui_section "Schritt 3: Sprache"
-    local language
-    language=$(select_language)
-    if [ -z "$language" ]; then
-        ui_ok "Automatisch"
-    else
-        ui_ok "$language"
-    fi
-    echo ""
+        ui_section "Schritt 3: Sprache"
+        local language
+        language=$(select_language)
+        if [ -z "$language" ]; then
+            ui_ok "Automatisch"
+        else
+            ui_ok "$language"
+        fi
+        echo ""
 
-    # Start transcription (use venv python directly)
-    ui_divider
-    ui_info "Transkription starten"
-    ui_divider
-    echo ""
+        # Start transcription (use venv python directly); mit Progress-Datei für Spinner + %-Anzeige
+        ui_divider
+        ui_info "Transkription starten"
+        ui_divider
+        echo ""
 
-    "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/transcribe.py" "$file_path" "$OUTPUT_PATH" "$model" "$language"
+        local prog_f
+        prog_f=$(mktemp)
+        trap 'rm -f "${prog_f:-}"' EXIT
+        PYTHONUNBUFFERED=1 "${VENV_PATH}/bin/python3" "${SCRIPT_DIR}/transcribe.py" "$file_path" "$OUTPUT_PATH" "$model" "$language" "$prog_f" &
+        local pid=$!
+        if type ui_spinner &>/dev/null && [ -t 1 ]; then
+            ui_spinner "$pid" "Transkribieren…" "$prog_f"
+        else
+            wait "$pid" 2>/dev/null || true
+        fi
+        local exit_code=0
+        wait "$pid" 2>/dev/null || exit_code=$?
+        trap - EXIT
+        rm -f "${prog_f:-}"
+        trap 'rm -f "'"$selected_file"'"' EXIT
 
-    local exit_code=$?
-    echo ""
-    if [ $exit_code -eq 0 ]; then
-        ui_ok "Transkription abgeschlossen."
-        ui_log "Ausgabe: ${OUTPUT_PATH}/"
-    else
-        ui_fail "Transkription fehlgeschlagen (Exit: $exit_code)"
-    fi
-    echo ""
+        echo ""
+        if [ "$exit_code" -eq 0 ]; then
+            local base out_txt
+            base=$(basename "$file_path")
+            out_txt="${OUTPUT_PATH}/${base%.*}.txt"
+            ui_ok "Transkription abgeschlossen."
+            ui_log "Ausgabe: ${OUTPUT_PATH}/"
+            [ -f "$out_txt" ] && ui_log "Datei: $out_txt"
+        else
+            ui_fail "Transkription fehlgeschlagen (Exit: $exit_code)"
+            local logfile="${SCRIPT_DIR}/logs/whisper.log"
+            if [ -f "$logfile" ]; then
+                ui_log "Letzte Zeilen aus logs/whisper.log:"
+                tail -n 8 "$logfile" 2>/dev/null | sed 's/^/    /' >&2
+            fi
+        fi
+        echo ""
 
-    # Keep terminal open if running in terminal
+        # Zurück ins Menü (ohne erneuten Update-Check) oder Beenden
+        if [ -t 0 ]; then
+            local again
+            read -rp "$(echo -e "${YELLOW}Noch eine transkribieren? (j/n):${RESET} ")" again
+            case "${again^^}" in
+                J|JA|Y|YES) echo "" ; continue ;;
+                *) break ;;
+            esac
+        else
+            break
+        fi
+    done
+
     if [ -t 0 ]; then
         read -rp "$(echo -e "${DIM}Drücke Enter zum Beenden…${RESET}")"
         echo ""

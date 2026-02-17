@@ -20,9 +20,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Changelog-Sektion für diese Version extrahieren
+        id: changelog
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          VERSION_ESC=$(echo "$VERSION" | sed 's/\./\\./g')
+          # Sektion von "## [X.Y.Z]" bis zum nächsten "---" oder "## [" extrahieren
+          BODY=$(awk '/^## \['"$VERSION_ESC"'\]/ { found=1 } found { if (/^---$/) exit; print }' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            BODY="📋 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)"
+          fi
+          echo "body<<RELEASE_BODY" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "RELEASE_BODY" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
+          body: ${{ steps.changelog.outputs.body }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

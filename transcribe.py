@@ -7,6 +7,10 @@ Uses WhisperX for accurate transcription with word-level timestamps
 import os
 import sys
 import logging
+import subprocess
+import tempfile
+import threading
+import time
 import traceback
 import warnings
 from pathlib import Path
@@ -167,19 +171,44 @@ def load_model(config: TranscriptionConfig, logger: logging.Logger) -> Any:
         raise
 
 
+def _extract_audio_to_wav(source: Path, logger: logging.Logger) -> Path:
+    """FFmpeg: Audio aus Video/Container in temp WAV (16 kHz mono) extrahieren. Umgeht Codec-/Pipe-Probleme."""
+    fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="vw_audio_")
+    os.close(fd)
+    wav_path = Path(wav_path)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(source),
+                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                str(wav_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return wav_path
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.warning(f"FFmpeg-Extraktion fehlgeschlagen: {e}")
+        if wav_path.exists():
+            wav_path.unlink(missing_ok=True)
+        raise
+
+
 def transcribe_audio(
     model,
     config: TranscriptionConfig,
-    logger: logging.Logger
+    logger: logging.Logger,
+    audio_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Transcribe audio/video file (API wie WhisperX README: load_audio → transcribe)."""
+    path_to_load = audio_path if audio_path is not None else config.file_path
     logger.info(f"Starting transcription: {config.file_path.name}")
     logger.info(f"Language: {'Auto-detect' if not config.language else config.language}")
     logger.info(f"Batch size: {config.batch_size}")
 
     try:
-        logger.info(f"Lade Audio: whisperx.load_audio({config.file_path.name})")
-        audio = whisperx.load_audio(str(config.file_path))
+        logger.info(f"Lade Audio: whisperx.load_audio({path_to_load.name})")
+        audio = whisperx.load_audio(str(path_to_load))
         if hasattr(audio, "shape") and len(audio.shape) >= 1:
             logger.info(f"Audio geladen: {audio.shape[0]} Samples (ca. {audio.shape[0] / 16000:.1f} s bei 16 kHz)")
         else:
@@ -296,8 +325,25 @@ def save_transcription(
 # Main Transcription Pipeline
 # ============================================================================
 
-def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> None:
-    """Main transcription pipeline"""
+def _write_progress(progress_file: Optional[str], text: str) -> None:
+    if not progress_file:
+        return
+    try:
+        with open(progress_file, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+            f.flush()
+            if hasattr(os, "fsync"):
+                os.fsync(f.fileno())
+    except OSError:
+        pass
+
+
+def run_transcription(
+    config: TranscriptionConfig,
+    logger: logging.Logger,
+    progress_file: Optional[str] = None,
+) -> None:
+    """Main transcription pipeline. Wenn progress_file gesetzt: nur dort Fortschritt, keine Konsole."""
     try:
         # Bibliotheken (z. B. Lightning) dürfen nicht auf die Konsole loggen – nur in Datei
         root = logging.getLogger()
@@ -311,43 +357,77 @@ def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> No
         logger.info(f"Output dir: {config.output_path}")
         logger.info(f"Model: {config.model_size}, Device: {config.device}, Compute: {config.compute_type}")
 
-        if sys.stdout.isatty():
+        _write_progress(progress_file, "Lade Modell…")
+        if not progress_file and sys.stdout.isatty():
             print(f"  {C_CYN}⟳{C_OFF} Lade Modell …", flush=True)
         logger.info("Lade WhisperX-Modell (whisperx.load_model)...")
         model = load_model(config, logger)
 
-        if sys.stdout.isatty():
+        temp_wav: Optional[Path] = None
+        if config.file_path.suffix.lower() != ".wav":
+            logger.info("Extrahiere Audio per FFmpeg (WAV 16 kHz mono) …")
+            temp_wav = _extract_audio_to_wav(config.file_path, logger)
+
+        _write_progress(progress_file, "Transkribiere…")
+        if progress_file:
+            _write_progress(progress_file, " 0%")
+        if not progress_file and sys.stdout.isatty():
             print(f"  {C_CYN}⟳{C_OFF} Transkribiere …", flush=True)
         logger.info("Starte Transkription (load_audio + model.transcribe)...")
-        result = transcribe_audio(model, config, logger)
-        
-        # Optional: Align for word-level timestamps
-        # Uncomment if you want word-level timestamps
-        # if result.get('segments') and result.get('language'):
-        #     aligned = align_segments(
-        #         result['segments'],
-        #         config.file_path,
-        #         result['language'],
-        #         config.device,
-        #         logger
-        #     )
-        #     if aligned:
-        #         result = aligned
-        
-        # Format output
+
+        stop_fake_progress = threading.Event()
+        fake_progress_done = threading.Event()
+
+        def _fake_progress_while_transcribing() -> None:
+            """Während transcribe_audio() läuft: Anzeige von 1% auf 89% hochziehen (alle ~2 s)."""
+            for pct in range(1, 90):
+                if stop_fake_progress.wait(timeout=2.0):
+                    break
+                _write_progress(progress_file, f" {pct}%")
+            fake_progress_done.set()
+
+        if progress_file:
+            t = threading.Thread(target=_fake_progress_while_transcribing, daemon=True)
+            t.start()
+        try:
+            result = transcribe_audio(
+                model, config, logger,
+                audio_path=temp_wav if temp_wav is not None else None,
+            )
+        finally:
+            stop_fake_progress.set()
+            if progress_file:
+                fake_progress_done.wait(timeout=1.0)
+            if temp_wav is not None and temp_wav.exists():
+                try:
+                    temp_wav.unlink()
+                except OSError:
+                    pass
+
+        # Format output + Fortschritt in % (Segment-Schleife: 90% → 100%)
         if result.get('segments'):
             total_segments = len(result['segments'])
             logger.info(f"Processing {total_segments} segments...")
-            # Nur Fortschrittsbalken auf der Konsole (Details im Log)
-            for segment in tqdm(
-                result['segments'],
-                desc='  Segmente',
-                unit='segment',
-                ncols=80,
-                leave=True,
-                file=sys.stdout,
-            ):
-                pass  # Segments already processed, just showing progress
+            if progress_file and total_segments > 0:
+                last_pct = 89
+                for idx in range(total_segments):
+                    # Segment-Fortschritt auf 90–100% abbilden
+                    pct = 90 + int(10.0 * (idx + 1) / total_segments)
+                    if pct > 100:
+                        pct = 100
+                    if pct != last_pct:
+                        _write_progress(progress_file, f" {pct}%")
+                        last_pct = pct
+            elif not progress_file:
+                for _ in tqdm(
+                    result['segments'],
+                    desc='  Segmente',
+                    unit='segment',
+                    ncols=80,
+                    leave=True,
+                    file=sys.stdout,
+                ):
+                    pass
         
         transcription_text = format_transcription(result)
         logger.info(f"Formatiert: {len(transcription_text)} Zeichen, {len(result.get('segments', []))} Segmente")
@@ -357,17 +437,20 @@ def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> No
             logger.info(f"Datei geschrieben: {output_file} ({output_file.stat().st_size} Bytes)")
         logger.info("=== Pipeline Ende (Erfolg) ===")
 
-        print(f"\n{C_CYN}{'═'*60}{C_OFF}")
-        print(f"{C_GRN}✓ Transkription fertig.{C_OFF} Gespeichert in:")
-        print(f"  {C_BLD}{output_file}{C_OFF}")
-        print(f"{C_CYN}{'═'*60}{C_OFF}\n")
+        _write_progress(progress_file, "100%")
+        if not progress_file:
+            print(f"\n{C_CYN}{'═'*60}{C_OFF}")
+            print(f"{C_GRN}✓ Transkription fertig.{C_OFF} Gespeichert in:")
+            print(f"  {C_BLD}{output_file}{C_OFF}")
+            print(f"{C_CYN}{'═'*60}{C_OFF}\n")
 
     except Exception as e:
         logger.error(f"Transcription pipeline failed: {e}")
         logger.info("=== Pipeline Ende (Fehler) ===")
         logger.debug(traceback.format_exc())
-        print(f"\n{C_RED}✗ Fehler: {e}{C_OFF}")
-        print(f"{C_DIM}Details siehe Log-Datei.{C_OFF}\n")
+        if not progress_file:
+            print(f"\n{C_RED}✗ Fehler: {e}{C_OFF}")
+            print(f"{C_DIM}Details siehe Log-Datei.{C_OFF}\n")
         sys.exit(1)
 
 
@@ -375,10 +458,10 @@ def run_transcription(config: TranscriptionConfig, logger: logging.Logger) -> No
 # CLI Entry Point
 # ============================================================================
 
-def parse_arguments() -> TranscriptionConfig:
-    """Parse command line arguments"""
+def parse_arguments() -> tuple[TranscriptionConfig, Optional[str]]:
+    """Parse command line arguments. Returns (config, progress_file_path or None)."""
     if len(sys.argv) < 3:
-        print(f"{C_BLD}Verwendung:{C_OFF} transcribe.py <Eingabedatei> <Ausgabeordner> [Modell] [Sprache]")
+        print(f"{C_BLD}Verwendung:{C_OFF} transcribe.py <Eingabedatei> <Ausgabeordner> [Modell] [Sprache] [Fortschrittsdatei]")
         print(f"\n{C_DIM}Modelle:{C_OFF} tiny, base, small (Standard), medium, large, large-v2, large-v3")
         print(f"{C_DIM}Sprachen:{C_OFF} en, de, fr, es, it, pt, ru, ja, zh oder Auto (Standard)")
         sys.exit(1)
@@ -387,11 +470,12 @@ def parse_arguments() -> TranscriptionConfig:
     output_path = Path(sys.argv[2]).resolve()
     model_size = sys.argv[3] if len(sys.argv) > 3 else "small"
     language = (sys.argv[4].strip() or None) if len(sys.argv) > 4 else None
+    progress_file = sys.argv[5] if len(sys.argv) > 5 else None
     
     # Auto-detect device and compute type
     device, compute_type = detect_device()
     
-    return TranscriptionConfig(
+    config = TranscriptionConfig(
         file_path=file_path,
         output_path=output_path,
         model_size=model_size,
@@ -399,27 +483,45 @@ def parse_arguments() -> TranscriptionConfig:
         device=device,
         compute_type=compute_type
     )
+    return config, progress_file
 
 
 def main() -> None:
     """Main entry point"""
+    config, progress_file = parse_arguments()
     logger = setup_logging()
     logger.info("="*60)
     logger.info("Video Whisper - Transcription Tool")
     logger.info("="*60)
     
+    log_stream = None
+    if progress_file:
+        log_dir = Path(__file__).resolve().parent / "logs"
+        log_dir.mkdir(exist_ok=True)
+        log_stream = open(log_dir / "whisper.log", "a", encoding="utf-8")
+        sys.stdout = sys.stderr = log_stream
+    
     try:
-        config = parse_arguments()
-        run_transcription(config, logger)
+        run_transcription(config, logger, progress_file)
     except KeyboardInterrupt:
         logger.info("\n⚠ Transcription cancelled by user")
-        print(f"\n{C_YEL}⚠ Abgebrochen durch Benutzer.{C_OFF}\n")
+        if not progress_file:
+            print(f"\n{C_YEL}⚠ Abgebrochen durch Benutzer.{C_OFF}\n")
         sys.exit(130)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         logger.debug(traceback.format_exc())
-        print(f"\n{C_RED}✗ Unerwarteter Fehler: {e}{C_OFF}\n")
+        if not progress_file:
+            print(f"\n{C_RED}✗ Unerwarteter Fehler: {e}{C_OFF}\n")
         sys.exit(1)
+    finally:
+        if log_stream is not None:
+            try:
+                log_stream.close()
+            except OSError:
+                pass
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
 
 
 if __name__ == "__main__":

@@ -8,7 +8,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/de/1.0.0/), Versionierung:
 
 ## [Unreleased]
 
-_(Keine Änderungen.)_
+### Added
+
+- **Transkription:** Spinner mit Fortschritt in % (1–89 % während Transkription, 90–100 % bei Segmenten). Bibliotheks-Ausgabe (z. B. torchcodec, Lightning) wird unterdrückt und nur ins Log geschrieben.
+- **Menü nach Transkription:** „Noch eine transkribieren? (j/n)“ – bei „j“ zurück zu Schritt 1 ohne erneuten Update-Check.
+- **Download-Dateinamen:** Einzel-URL: optional eigener Dateiname, sonst Videotitel von YouTube. Bulk: optional Basis-Titel (z. B. „Video“ → Video 1, Video 2, …). Keine Überschreibung: bei Kollision „Titel (2).ext“, „Titel (3).ext“.
+- **Menü-Option 4:** Alle Dateien in `medien/` zu prass1, prass2, … umbenennen (sortiert nach Name).
+- **yt-dlp:** Erkennt Einzelvideo vs. Playlist; bei Playlist-URL wird nur ein Video geladen (`noplaylist`).
+
+### Changed
+
+- **Dateiliste:** Wird bei Rückkehr ins Menü jedes Mal neu aus `medien/` gelesen (keine gecachte Liste).
+- **Bulk-Download:** Klarere Anzeige (Leerzeile zwischen Einträgen, Spinner mit aktuellem Zähler).
+- **Fehlerausgabe:** Bei fehlgeschlagenem Download wird die vollständige Fehlerausgabe von yt-dlp/Skript angezeigt; bei fehlgeschlagener Transkription die letzten Zeilen aus `logs/whisper.log`.
+
+### Fixed
+
+- **Transkription „hängt“ nach ✓:** Mit `set -e` beendete `wait $pid` bei Fehlercode das Skript – Exit-Code wird nun ohne Abbruch ausgewertet.
+- **Transkription fehlgeschlagen (Exit 1):** FFmpeg-Vorverarbeitung: Für Nicht-WAV-Dateien wird Audio per FFmpeg in eine temporäre WAV (16 kHz, mono) extrahiert, um Codec-/Pipe-Fehler (z. B. „Output file does not contain any stream“) zu vermeiden.
+- **Download „fehlgeschlagen“ obwohl Datei da:** Pfad-Ausgabe mit `flush=True`; Fallback sucht neueste Datei in `medien/` seit Download-Start (Start-Marker-Datei, da Progress-Datei ständig überschrieben wird).
+- **Spinner:** Weißes Kästchen am Zeilenende war der sichtbare Cursor – Cursor wird während des Spinners ausgeblendet und danach wieder eingeblendet.
 
 ---
 

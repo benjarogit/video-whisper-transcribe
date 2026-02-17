@@ -123,6 +123,8 @@ ui_spinner() {
         echo -e "  ${GREEN}${OK}${RESET} ${msg}"
         return
     fi
+    # Cursor ausblenden – das „weiße Kästchen“ am Ende der Zeile ist oft der Cursor
+    printf '\033[?25l'
     local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local i=0
     while kill -0 "$pid" 2>/dev/null; do
@@ -132,12 +134,12 @@ ui_spinner() {
             last="${last//$'\n'/}"
             last="${last:0:60}"
         fi
-        printf "\r  ${CYAN}${frames[$i]}${RESET}  %s  ${DIM}%-60s${RESET}" "$msg" "$last"
+        printf "\r  ${CYAN}${frames[$i]}${RESET}  %s  ${DIM}%s${RESET}\033[K" "$msg" "$last"
         i=$(( (i + 1) % ${#frames[@]} ))
         sleep 0.1
     done
-    # Bis Zeilenende löschen, damit keine Reste der Spinner-Padding-Zeile (z. B. „…“) stehen bleiben
-    printf "\r  ${GREEN}${OK}${RESET} %s\033[K\n" "$msg"
+    # Cursor wieder einblenden, Zeilenende löschen
+    printf "\r  ${GREEN}${OK}${RESET} %s\033[K\033[?25h\n" "$msg"
 }
 
 # Optional: generisches Menü – gibt gewählte Nummer zurück (oder leer)
